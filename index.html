@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Solstice Runner — A Tribute to Alan Turing</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d0a1a; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: system-ui, sans-serif; color: #eee; padding: 20px; }
+  h1 { font-size: 20px; font-weight: 500; color: #FFD060; margin-bottom: 8px; }
+  canvas { border-radius: 12px; cursor: pointer; display: block; max-width: 700px; width: 100%; }
+  #ui { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-top: 10px; max-width: 700px; width: 100%; }
+  button { padding: 8px 20px; font-size: 14px; background: transparent; border: 1px solid rgba(255,208,96,0.5); color: #FFD060; border-radius: 8px; cursor: pointer; }
+  button:hover { background: rgba(255,208,96,0.1); }
+  #score-box { font-size: 14px; color: #aaa; }
+  #score-box strong { color: #FFD060; }
+  #msg { font-size: 13px; color: #888; flex: 1; }
+  #toast { font-size: 13px; color: #b8a0ff; margin-top: 6px; min-height: 18px; max-width: 700px; width: 100%; transition: opacity 0.4s; }
+</style>
+</head>
+<body>
+<h1>Solstice Runner</h1>
+<canvas id="c"></canvas>
+<div id="ui">
+  <button id="btn">Start</button>
+  <span id="score-box">Score: <strong id="score">0</strong> &nbsp; Best: <strong id="best">0</strong></span>
+  <span id="msg">Jump over shadows — Alan Turing's light lives on!</span>
+</div>
+<div id="toast"></div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const bestEl = document.getElementById('best');
+const msgEl = document.getElementById('msg');
+const toastEl = document.getElementById('toast');
+const btn = document.getElementById('btn');
+
+const W = 700, H = 270;
+canvas.width = W; canvas.height = H;
+
+const GROUND = H - 55;
+const PLAYER_X = 85;
+
+const TURING_FACTS = [
+  "Alan Turing broke the Enigma cipher, helping end WWII.",
+  "Turing invented the concept of a universal computing machine in 1936.",
+  "The Turing Test asks: can a machine be indistinguishable from a human?",
+  "Turing was granted a Royal Pardon posthumously in 2013.",
+  "Turing's work laid the mathematical foundation for modern AI.",
+  "Turing studied biological patterns — morphogenesis — before his death.",
+  "June 23 is Alan Turing's birthday. This solstice honors him.",
+];
+
+let state = 'idle', player, obstacles, particles, stars, frame, score, best = 0, speed, spawnTimer;
+let skyPhase = 0, factTimer = 0, shownFacts = new Set();
+let toastTimeout;
+
+function showFact() {
+  const unseen = TURING_FACTS.map((f,i) => i).filter(i => !shownFacts.has(i));
+  if (!unseen.length) return;
+  const i = unseen[Math.floor(Math.random() * unseen.length)];
+  shownFacts.add(i);
+  toastEl.style.opacity = '1';
+  toastEl.textContent = '✦ ' + TURING_FACTS[i];
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => { toastEl.style.opacity = '0'; }, 4500);
+}
+
+function reset() {
+  player = { y: GROUND, vy: 0, grounded: true, w: 28, h: 32 };
+  obstacles = []; particles = []; frame = 0; score = 0; speed = 4; spawnTimer = 0;
+  skyPhase = 0; factTimer = 0; shownFacts.clear();
+  scoreEl.textContent = '0';
+  stars = Array.from({length: 32}, () => ({
+    x: Math.random() * W, y: Math.random() * (GROUND * 0.75),
+    r: Math.random() * 1.5 + 0.4, twinkle: Math.random() * Math.PI * 2
+  }));
+}
+
+function jump() {
+  if (state === 'idle' || state === 'dead') {
+    state = 'playing'; btn.textContent = 'Restart';
+    msgEl.textContent = 'Jump over shadow obstacles!';
+    reset();
+  }
+  if (player && player.grounded) {
+    player.vy = -12.5; player.grounded = false;
+    for (let i = 0; i < 8; i++) particles.push({
+      x: PLAYER_X + player.w/2, y: GROUND + player.h,
+      vx: (Math.random()-0.5)*4, vy: -(Math.random()*3+1),
+      life: 1, r: Math.random()*3+1.5
+    });
+  }
+}
+
+btn.addEventListener('click', jump);
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
+});
+canvas.addEventListener('click', jump);
+
+function spawnObstacle() {
+  const isTall = score > 8 && Math.random() < 0.35;
+  const w = 22 + Math.random() * 12;
+  const h = isTall ? 62 + Math.random() * 22 : 32 + Math.random() * 20;
+  const binaryStrings = ['01000001','01001100','01000001','01001110','00110001','00110000','01010100'];
+  const hasBinary = Math.random() < 0.55;
+  obstacles.push({
+    x: W + 10, y: GROUND + player.h - h, w, h, isTall,
+    binary: hasBinary ? binaryStrings[Math.floor(Math.random()*binaryStrings.length)] : null
+  });
+}
+
+function lerpColor(a, b, t) {
+  const ar=parseInt(a.slice(1,3),16), ag=parseInt(a.slice(3,5),16), ab=parseInt(a.slice(5,7),16);
+  const br=parseInt(b.slice(1,3),16), bg=parseInt(b.slice(3,5),16), bb=parseInt(b.slice(5,7),16);
+  return `rgb(${Math.round(ar+(br-ar)*t)},${Math.round(ag+(bg-ag)*t)},${Math.round(ab+(bb-ab)*t)})`;
+}
+
+function drawSky() {
+  const t = Math.min(skyPhase, 1);
+  const top = lerpColor('#FFF3D6', '#0A0820', t);
+  const bot = lerpColor('#FFD080', '#1A0840', t);
+  const grad = ctx.createLinearGradient(0,0,0,GROUND);
+  grad.addColorStop(0, top); grad.addColorStop(1, bot);
+  ctx.fillStyle = grad; ctx.fillRect(0,0,W,GROUND);
+}
+
+function drawStars() {
+  const alpha = Math.min(skyPhase * 2.2, 0.95);
+  if (alpha <= 0) return;
+  stars.forEach(s => {
+    s.twinkle += 0.03;
+    const a = alpha * (0.4 + 0.6 * Math.sin(s.twinkle));
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawCelestial() {
+  const t = Math.min(skyPhase, 1);
+  const sx = W * 0.85 - t * W * 0.22;
+  const sy = 48 + t * 28;
+
+  // Sun
+  ctx.save(); ctx.globalAlpha = Math.max(0, 1 - t * 1.5);
+  for (let i = 3; i >= 0; i--) {
+    ctx.beginPath(); ctx.arc(sx,sy,24+i*9,0,Math.PI*2);
+    ctx.fillStyle = `rgba(255,184,0,${0.07-i*0.012})`; ctx.fill();
+  }
+  ctx.beginPath(); ctx.arc(sx,sy,23,0,Math.PI*2);
+  ctx.fillStyle='#FFB800'; ctx.fill();
+  ctx.strokeStyle='#FFD060'; ctx.lineWidth=1.8; ctx.globalAlpha=0.35;
+  for (let a=0;a<8;a++){
+    const ang=(a/8)*Math.PI*2+frame*0.012;
+    ctx.beginPath();
+    ctx.moveTo(sx+Math.cos(ang)*27,sy+Math.sin(ang)*27);
+    ctx.lineTo(sx+Math.cos(ang)*40,sy+Math.sin(ang)*40);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Moon
+  if (t > 0.35) {
+    const ma = Math.min((t-0.35)/0.65, 1);
+    const mx = W*0.1 + t*60, my = 42 + Math.sin(frame*0.007)*7;
+    ctx.save(); ctx.globalAlpha = ma * 0.92;
+    ctx.beginPath(); ctx.arc(mx,my,17,0,Math.PI*2);
+    ctx.fillStyle='#EEE8C0'; ctx.fill();
+    ctx.beginPath(); ctx.arc(mx+7,my-3,14,0,Math.PI*2);
+    ctx.fillStyle = lerpColor('#FFD080','#1A0840', t); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawGround() {
+  const t = Math.min(skyPhase, 1);
+  const segW = 62, offset = (frame * speed) % segW;
+  for (let x = -offset; x < W; x += segW) {
+    const isLight = Math.floor((x+offset)/segW) % 3 !== 0;
+    const lc = lerpColor('#F4A028','#1A0828',t);
+    const dc = lerpColor('#8B5E1A','#080510',t);
+    ctx.fillStyle = isLight ? lc : dc;
+    ctx.fillRect(x, GROUND+player.h, segW, H-GROUND-player.h);
+  }
+  ctx.fillStyle = t > 0.5 ? '#4A2090' : '#C47820';
+  ctx.fillRect(0, GROUND+player.h, W, 3);
+}
+
+function drawPlayer() {
+  ctx.save();
+  const bob = player.grounded ? Math.sin(frame*0.18)*1.5 : 0;
+  ctx.translate(PLAYER_X, player.y + bob);
+  ctx.fillStyle='rgba(255,190,0,0.12)';
+  ctx.beginPath(); ctx.ellipse(player.w/2,player.h/2,player.w/2+7,player.h/2+7,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#FFD060';
+  ctx.beginPath(); ctx.ellipse(player.w/2,player.h/2,player.w/2,player.h/2,0,0,Math.PI*2); ctx.fill();
+  ctx.lineWidth=2.5;
+  for (let i=0;i<8;i++){
+    const ang=(i/8)*Math.PI*2+frame*0.05;
+    ctx.strokeStyle='#FF9500';
+    ctx.beginPath();
+    ctx.moveTo(player.w/2+Math.cos(ang)*(player.w/2),player.h/2+Math.sin(ang)*(player.h/2));
+    ctx.lineTo(player.w/2+Math.cos(ang)*(player.w/2+9),player.h/2+Math.sin(ang)*(player.h/2+9));
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.fillStyle='rgba(0,0,0,0.1)';
+  ctx.beginPath(); ctx.ellipse(PLAYER_X+player.w/2,GROUND+player.h+2,15,4,0,0,Math.PI*2); ctx.fill();
+}
+
+function drawObstacle(o) {
+  ctx.save();
+  const grad=ctx.createLinearGradient(o.x,o.y,o.x,o.y+o.h);
+  grad.addColorStop(0,'#2A1558'); grad.addColorStop(1,'#06040F');
+  ctx.fillStyle=grad;
+  ctx.beginPath(); ctx.roundRect(o.x,o.y,o.w,o.h,4); ctx.fill();
+  ctx.strokeStyle='rgba(150,90,255,0.35)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.roundRect(o.x,o.y,o.w,o.h,4); ctx.stroke();
+  if (o.binary) {
+    ctx.fillStyle='rgba(180,120,255,0.75)';
+    const fs = Math.min(7, o.w - 3);
+    ctx.font=`bold ${fs}px monospace`;
+    ctx.textAlign='center';
+    const chars = o.binary.split('');
+    const step = (o.h - 12) / Math.max(chars.length - 1, 1);
+    chars.forEach((ch,i) => {
+      const yy = o.y + 9 + i * step;
+      if (yy < o.y + o.h - 3) ctx.fillText(ch, o.x + o.w/2, yy);
+    });
+    ctx.textAlign='left';
+  }
+  ctx.restore();
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.save(); ctx.globalAlpha = p.life;
+    ctx.fillStyle='#FFD060';
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawHUD() {
+  const t = Math.min(skyPhase, 1);
+  const barW=110, barH=6, bx=14, by=12;
+  ctx.fillStyle='rgba(255,255,255,0.1)';
+  ctx.beginPath(); ctx.roundRect(bx,by,barW,barH,3); ctx.fill();
+  const bg=ctx.createLinearGradient(bx,0,bx+barW,0);
+  bg.addColorStop(0,'#FFD060'); bg.addColorStop(1,'#7030D0');
+  ctx.fillStyle=bg;
+  ctx.beginPath(); ctx.roundRect(bx,by,Math.max(barW*t,3),barH,3); ctx.fill();
+  ctx.fillStyle=t>0.5?'rgba(200,170,255,0.85)':'rgba(255,210,100,0.8)';
+  ctx.font='10px system-ui';
+  ctx.fillText('dawn → dusk', bx, by+barH+12);
+  const label = t<0.3?'Midsummer day':t<0.7?'Dusk falling…':'Solstice night';
+  ctx.textAlign='right'; ctx.fillText(label, W-14, 20); ctx.textAlign='left';
+}
+
+function drawOverlay() {
+  if (state==='idle') {
+    ctx.fillStyle='rgba(15,8,35,0.55)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#FFD060'; ctx.font='500 28px system-ui';
+    ctx.fillText('Solstice Runner', W/2, H/2-34);
+    ctx.fillStyle='rgba(190,155,255,0.9)'; ctx.font='14px system-ui';
+    ctx.fillText('A tribute to Alan Turing & the June Solstice', W/2, H/2-6);
+    ctx.fillStyle='rgba(255,220,100,0.65)'; ctx.font='13px system-ui';
+    ctx.fillText('Click or press Space to start — jump over shadows!', W/2, H/2+22);
+    ctx.textAlign='left';
+  }
+  if (state==='dead') {
+    ctx.fillStyle='rgba(8,4,22,0.65)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#FF8C00'; ctx.font='500 22px system-ui';
+    ctx.fillText('Swallowed by shadow!', W/2, H/2-18);
+    ctx.fillStyle='rgba(200,170,255,0.85)'; ctx.font='14px system-ui';
+    ctx.fillText('Score: '+score+'  ·  Best: '+best, W/2, H/2+6);
+    ctx.fillStyle='rgba(255,210,90,0.7)'; ctx.font='13px system-ui';
+    ctx.fillText('Click or Space to try again', W/2, H/2+28);
+    ctx.textAlign='left';
+  }
+}
+
+function checkCollision(o) {
+  const px=PLAYER_X+6, py=player.y+6, pw=player.w-12, ph=player.h-8;
+  return px<o.x+o.w && px+pw>o.x && py<o.y+o.h && py+ph>o.y;
+}
+
+function update() {
+  if (state!=='playing') return;
+  frame++;
+  score = Math.floor(frame/10);
+  scoreEl.textContent = score;
+  if (score>best) { best=score; bestEl.textContent=best; }
+  speed = 4 + score*0.032;
+  skyPhase = Math.min(score/280, 1);
+
+  player.vy += 0.58; player.y += player.vy;
+  if (player.y >= GROUND) { player.y=GROUND; player.vy=0; player.grounded=true; }
+
+  spawnTimer++;
+  const interval = Math.max(38, 88 - score*0.38);
+  if (spawnTimer > interval) { spawnObstacle(); spawnTimer=0; }
+
+  obstacles = obstacles.filter(o => o.x > -60);
+  obstacles.forEach(o => {
+    o.x -= speed;
+    if (checkCollision(o)) {
+      state='dead';
+      msgEl.textContent='Swallowed by shadow — but the light endures. Try again!';
+    }
+  });
+
+  particles = particles.filter(p => p.life>0);
+  particles.forEach(p => { p.x+=p.vx; p.y+=p.vy; p.vy+=0.12; p.life-=0.044; });
+
+  factTimer++;
+  if (factTimer > 420) { factTimer=0; showFact(); }
+}
+
+function draw() {
+  ctx.clearRect(0,0,W,H);
+  drawSky(); drawStars(); drawCelestial(); drawGround();
+  if (state!=='idle') {
+    drawParticles();
+    obstacles.forEach(drawObstacle);
+    drawPlayer();
+    drawHUD();
+  }
+  drawOverlay();
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+reset(); loop();
+</script>
+</body>
+</html>
